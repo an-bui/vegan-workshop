@@ -1,0 +1,129 @@
+---
+title: "scratch paper"
+author: "An Bui"
+date: "10/28/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r libraries}
+library(tidyverse)
+library(vegan)
+library(here)
+```
+
+```{r data}
+ab <- read_csv(here("data", "anza-borrego.csv")) %>% 
+  mutate(site = "Anza-Borrego") %>% 
+  pivot_wider(names_from = Species, values_from = Number)
+
+bs <- read_csv(here("data", "big-sur.csv")) %>% 
+  mutate(site = "Big Sur") %>% 
+  pivot_wider(names_from = Species, values_from = Number) %>% 
+  bind_rows(ab)
+
+ml <- read_csv(here("data", "mammoth-lakes.csv")) %>% 
+  mutate(site = "Mammoth Lakes") %>% 
+  pivot_wider(names_from = Species, values_from = Number) %>% 
+  bind_rows(bs)
+
+oak <- read_csv(here("data", "oakland.csv")) %>% 
+  mutate(site = "Oakland") %>% 
+  pivot_wider(names_from = Species, values_from = Number) %>% 
+  bind_rows(ml)
+
+teha <- read_csv(here("data", "tehachapi.csv")) %>% 
+  mutate(site = "Tehachapi") %>% 
+  pivot_wider(names_from = Species, values_from = Number) %>% 
+  bind_rows(oak)
+
+  
+dv <- read_csv(here("data", "death-valley.csv")) %>% 
+  mutate(site = "Death Valley") %>% 
+  pivot_wider(names_from = Species, values_from = Number) %>% 
+  bind_rows(teha)
+
+jt <- read_csv(here("data", "joshua-tree.csv")) %>% 
+  mutate(site = "Joshua Tree") %>% 
+  pivot_wider(names_from = Species, values_from = Number) %>% 
+  bind_rows(dv)
+
+mrv <- read_csv(here("data", "mrv.csv")) %>% 
+  mutate(site = "Mojave River Valley") %>% 
+  pivot_wider(names_from = Species, values_from = Number) %>% 
+  bind_rows(jt)
+
+moss <- read_csv(here("data", "moss-landing.csv")) %>% 
+  mutate(site = "Moss Landing") %>% 
+  pivot_wider(names_from = Species, values_from = Number) %>% 
+  bind_rows(mrv)
+
+pinn <- read_csv(here("data", "pinnacles.csv")) %>% 
+  mutate(site = "Pinnacles") %>% 
+  pivot_wider(names_from = Species, values_from = Number) %>% 
+  bind_rows(moss)
+
+sbc <- read_csv(here("data", "sbc.csv")) %>% 
+  mutate(site = "San Bernardino County") %>% 
+  pivot_wider(names_from = Species, values_from = Number) %>% 
+  bind_rows(pinn)
+
+rrc <- read_csv(here("data", "rrc.csv")) %>% 
+  mutate(site = "Red Rock Canyon") %>% 
+  pivot_wider(names_from = Species, values_from = Number) %>% 
+  bind_rows(sbc)
+
+son <- read_csv(here("data", "sonora.csv")) %>% 
+  mutate(site = "Sonora") %>% 
+  pivot_wider(names_from = Species, values_from = Number) %>% 
+  bind_rows(rrc) %>% 
+  replace(., is.na(.), 0)
+
+write_csv(final, here("data", "birds.csv"))
+```
+
+```{r species-accumulation-curves}
+sa_df <- son %>% 
+  column_to_rownames("site")
+
+sp_ac <- specaccum(sa_df, method = "random", permutations = 200)
+plot(sp_ac$sites, sp_ac$richness)
+```
+
+```{r species-rarefaction curves}
+raremax <- min(rowSums(sa_df))
+rarecurve(sa_df, step = 20, sample = raremax, label = TRUE)
+```
+
+```{r diversity-indices}
+# shannon
+shannondiv <- diversity(sa_df) %>% 
+  enframe() %>% 
+  dplyr::rename(site = name,
+                shan_div = value)
+shannondiv
+
+shandivplot <- ggplot(shannondiv, aes(x = site, y = shan_div, fill = site)) +
+  geom_col(color = "black")
+shandivplot
+```
+
+```{r NMDS}
+NMDS <- metaMDS(sa_df, distance = "bray", k = 2, zerodist = "add", maxit = 30)
+
+sites <- son %>% 
+  pull(site) %>% 
+  enframe() %>% 
+  select(value)
+
+plot_df <- as_tibble(NMDS$points) %>% 
+  bind_cols(sites, .)
+
+ggplot(plot_df, aes(x = MDS1, y = MDS2)) +
+  geom_point() +
+  geom_text(aes(label = value))
+```
+
