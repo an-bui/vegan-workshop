@@ -112,3 +112,9 @@ permanova <- adonis(birds_df ~ ELT, data = site_type, method = "bray")
 permanova
 ```
 
+```{r radfit}
+rad <- radfit(birds_df[111,])
+rad
+radlattice(rad)
+```
+
