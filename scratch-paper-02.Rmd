@@ -1,0 +1,23 @@
+---
+title: "scratch paper - new data"
+author: "An Bui"
+date: "10/29/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(here)
+library(vegan)
+```
+
+```{r}
+birds <- read_csv(here("data", "birds.csv"))
+
+env <- read_csv(here("data", "trees.csv"))
+```
+
