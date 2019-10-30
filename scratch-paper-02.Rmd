@@ -9,15 +9,106 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-```{r}
+```{r libraries}
 library(tidyverse)
 library(here)
 library(vegan)
 ```
 
-```{r}
-birds <- read_csv(here("data", "birds.csv"))
+```{r data}
+birds <- read_csv(here("data", "birds.csv")) %>% 
+  rename(point = X1)
 
-env <- read_csv(here("data", "trees.csv"))
+birds$point <- paste("point", birds$point, sep = "_")
+
+birds_df <- birds %>% 
+  column_to_rownames("point")
+
+trees <- read_csv(here("data", "trees.csv")) %>% 
+  rename(point = X1)
+
+trees$point <- paste("point", trees$point, sep = "_")
+
+veg <- read_csv(here("data", "field-veg.csv")) %>%
+  rename(point = X1) %>% 
+  mutate(ELT = recode(ELT, do = "dry", dm = "mix", wm = "riparian"))
+
+veg$point <- paste("point", veg$point, sep = "_")
+```
+
+```{r combine-frames}
+indicator_trees <- trees %>% 
+  # select desired columns - matches("a|b|c") will give all columns that contain a, b, or c!!!
+  select(point, matches("Quercus|Smilax|Vaccinium"), Acer_rubrum, Lindera_benzoin, Acer_saccharum, Ulmus_rubra, Fraxinus_pennsylvanica, Rosa_multiflora, Toxicodendron_radicans, Betula_nigra, Acer_saccharinum)
+
+env <- full_join(veg, indicator_trees, by = "point")
+
+site_type <- env %>% 
+  select(point, ELT)
+
+# write_csv(env, here("data", "environmental-variables.csv"))
+```
+
+```{r species-accumulation-curve}
+bird_sa_curve <- specaccum(birds, method = "random", permutations = 200)
+df <- data.frame(bird_sa_curve$sites, bird_sa_curve$richness) %>%
+  rename(sites = bird_sa_curve.sites,
+         richness = bird_sa_curve.richness)
+
+sa_curve <- ggplot(df, aes(x = sites, y = richness)) +
+  geom_point()
+sa_curve
+```
+
+```{r species-rarefaction-curve}
+raremax <- min(rowSums(birds))
+
+rarecurve(birds, step = 20, sample = raremax, label = TRUE)
+```
+
+```{r diversity-indices}
+shannondiv <- birds %>% 
+  column_to_rownames("point") %>% 
+  diversity() %>% 
+  enframe() %>% 
+  dplyr::rename(point = name,
+                shan_div = value) %>% 
+  full_join(site_type, ., by = "point")
+shannondiv
+
+shandivplot <- ggplot(shannondiv, aes(x = point, y = shan_div, fill = point)) +
+  geom_col(color = "black") +
+  theme(legend.position = "none")
+shandivplot
+
+shandiv_sum <- shannondiv %>% 
+  group_by(ELT) %>% 
+  summarize(mean = mean(shan_div),
+            err = sd(shan_div)/sqrt(length(shan_div)))
+
+shandiv_sum_plot <- ggplot(shandiv_sum, aes(x = ELT, y = mean, fill = ELT)) +
+  geom_col(color = "black") +
+  geom_errorbar(aes(ymin = mean - err, ymax = mean + err))
+shandiv_sum_plot
+```
+
+```{r NMDS}
+NMDS <- metaMDS(birds_df, distance = "bray", k = 2, zerodist = "add", maxit = 30)
+
+plot_df <- as_tibble(NMDS$points) %>% 
+  bind_cols(site_type, .)
+
+ggplot(plot_df, aes(x = MDS1, y = MDS2)) +
+  geom_point() +
+  geom_text(aes(label = point))
+
+ggplot(plot_df, aes(x = MDS1, y = MDS2, color = ELT)) +
+  geom_point() +
+  stat_ellipse()
+```
+
+```{r perMANOVA}
+permanova <- adonis(birds_df ~ ELT, data = site_type, method = "bray")
+permanova
 ```
 
