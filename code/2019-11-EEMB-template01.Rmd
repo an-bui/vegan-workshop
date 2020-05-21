@@ -1,0 +1,145 @@
+---
+title: 'vegan workshop - EEMB edition'
+author: "[your name here]"
+date: "27 November 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r libraries-data, message = FALSE}
+# libraries
+library(tidyverse)
+library(vegan)
+
+# data
+# bird communities
+birds <- read_csv("bird-comm.csv") %>% 
+  column_to_rownames("site")
+# environmental variables
+env <- read_csv("env-var.csv")
+# set up a "metadata" frame - will be useful for plotting later!
+site_type <- env %>% 
+  select(site, landtype)
+```
+
+### How speciose are my communities?
+
+```{r species-richness}
+sppr <- specnumber(birds)
+
+sppr_aov <- aov(sppr ~ landtype, data = site_type)
+summary(sppr_aov)
+```
+
+```{r species-richness-plot}
+sppr_df <- sppr %>% 
+  enframe() %>% 
+  full_join(site_type, by = c("name" = "site"))
+
+sppr_plot <- ggplot(sppr_df, aes(x = landtype, y = value, color = landtype)) +
+  geom_boxplot()
+sppr_plot
+```
+
+### How diverse are my communities?
+
+```{r shannon-diversity}
+shannondiv <- diversity(birds)
+```
+
+```{r shannon-diversity-plot}
+shandiv_df <- shannondiv %>% 
+  enframe() %>% 
+  full_join(., site_type, by = c("name" = "site")) %>% 
+  group_by(landtype) %>% 
+  summarize(mean = mean(value))
+
+shandiv_plot <- ggplot(shandiv_df, aes(x = landtype, y = mean, fill = landtype)) +
+  geom_col()
+shandiv_plot
+```
+
+### How different are my communities in species composition?
+
+#### perMANOVA
+```{r bird-permanova}
+bird_perm <- adonis(birds ~ landtype, data = env)
+bird_perm
+```
+
+#### PCA
+```{r bird-PCA}
+birdPCA <- rda(birds)
+birdPCA
+pcabiplot <- biplot(birdPCA)
+
+PCAscores <- as.data.frame(pcabiplot$sites)
+PCAvect <- as.data.frame(pcabiplot$species)
+
+ggplot(PCAscores) +
+  geom_point(aes(x = PC1, y = PC2), color = "red") +
+  geom_segment(data = PCAvect, aes(x = 0, y = 0, xend = PC1, yend = PC2), arrow = arrow(length = unit(0.2, "cm"))) +
+  geom_text(data = PCAvect, aes(x = PC1, y = PC2, label = rownames(PCAvect)))
+```
+
+#### NMDS
+```{r bird-NMDS}
+bird_NMDS <- metaMDS(birds)
+
+bird_NMDS
+
+stressplot(bird_NMDS)
+```
+
+```{r NMDS-plot-baseR}
+plot(bird_NMDS)
+```
+
+```{r NMDS-plot}
+plot_df <- as_tibble(bird_NMDS$points) %>% 
+  bind_cols(site_type, .)
+
+NMDS_plot <- ggplot(plot_df, aes(x = MDS1, y = MDS2, color = landtype, shape = landtype)) +
+  geom_point(size = 3, alpha = 0.8) +
+  stat_ellipse()
+NMDS_plot
+```
+
+##### Things to consider about stress
+
+```{r subsampled-NMDS}
+sub <- birds[sample(nrow(birds), 20), ]
+subNMDS <- metaMDS(sub)
+stressplot(subNMDS)
+```
+
+### How is community structure related to specific environmental variables?
+
+```{r bird-CCA}
+birdCCA <- cca(birds ~ canopy_height + stems_ha + big_stem_bas, data = env)
+birdCCA
+```
+
+```{r bird-CCA-plot}
+ccaplot <- plot(birdCCA)
+
+ccavectors <- as.data.frame(ccaplot$biplot * 5.48)
+
+site_data <- fortify(birdCCA) %>% 
+  filter(Score == "sites") %>% 
+  full_join(., site_type, by = c("Label" = "site"))
+
+species_data <- fortify(birdCCA) %>% 
+  filter(Score == "species")
+
+ggplot(site_data) +
+  geom_point(aes(x = CCA1, y = CCA2), shape = 19, color = "red") +
+  geom_segment(data = ccavectors, aes(x = 0, y = 0, xend = CCA1, yend = CCA2), arrow = arrow(length = unit(0.2, "cm"))) +
+  geom_point(data = species_data, aes(x = CCA1, y = CCA2), shape = 17, size = 2, color = "blue") +
+  geom_text(data = ccavectors, aes(x = CCA1, y = CCA2, label = rownames(ccavectors)))
+```
+
+

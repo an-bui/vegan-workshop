@@ -1,0 +1,346 @@
+---
+title: 'Vegan cheat sheet'
+author: "An Bui"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### Introduction and main takeaways
+
+In this workshop, we worked through real data on bird communities in three different habitat types. The data are published in a _really cool_ paper: Adams, Bryce T. and Stephen N. Matthews. "Diverse temperate forest bird assemblages demonstrate closer correspondence to plant species composition than vegetation structure.” _Ecography_. https://doi.org/10.1111/ecog.04487
+
+With the functions from  this workshop, you'll be able to answer the following questions about the data (and your own!):  
+
+* How speciose are my communities? `specnumber()`  
+* How diverse are my communities? `diversity()`  
+* How different are my communities in species composition? `adonis()`, `rda()`, `metaMDS()`  
+* How is community structure related to specific environmental variables? `cca()`
+
+Let's start by loading in our libraries and data.
+
+```{r libraries-data, message = FALSE}
+# libraries
+library(tidyverse)
+library(vegan)
+library(ggvegan)
+
+# data
+# bird communities
+birds <- read_csv(here::here("data", "bird-comm.csv")) %>% 
+  column_to_rownames("site")
+
+# environmental variables
+env <- read_csv(here::here("data", "env-var.csv"))
+
+# set up a "metadata" frame - will be useful for plotting later!
+site_type <- env %>% 
+  select(site, landtype)
+```
+
+
+#### What's all this data?
+
+Bird communities were sampled using point counts at 120 points distributed amongst 3 ecological landtypes: 1. dry (ridgetops), 2. riparian (bottomlands), and 3. mixed (hillslopes). The landtypes can be distinguished using their most common tree species, though the site is speciose (~75 tree species).
+
+The `birds` data frame is in the format that data generally have to be in to start doing any analysis, which is to say that samples (or sites) are in rows, and species are columns. **The only entries in the data frame are counts.**  
+If you'd like to explore what species are in this set, you can translate alpha codes to common names using [this chart](https://www.birdpop.org/docs/misc/Alpha_codes_eng.pdf).
+
+```{r birds}
+head(birds, 3)
+```
+
+The `env` data frame contains all the "environmental" variables that were measured, which in this case was tree community composition and canopy structure. An explanation of the columns is below:
+
+Column | Meaning |
+------ | ------- |
+site  | point count (1-120) |
+landtype    | ecological landtype (dry, riparian, mixed) |
+stems_ha | total stem density (# of stems per hectare) of both under and overstory stems |
+big_stem_bas | large stem basal area (m2/hectare) of trees [stems/trees >/=8 cm diameter at breast height (DBH)] |
+canopy_cover | percent canopy cover |
+canopy_height | mean canopy height (m) |
+
+
+### How speciose are my communities?
+
+`specnumber()` will tell you the number of species within each sample. You can then run an analysis of variance to ask if mean species richness is significantly different across sites.
+
+```{r species-richness}
+sppr <- specnumber(birds)
+
+# analysis of variance takes the same form as the usual models you'd see in R
+# response ~ dependent, data = environmental grouping
+sppr_aov <- aov(sppr ~ landtype, data = site_type)
+summary(sppr_aov)
+```
+
+```{r species-richness-plot}
+sppr_df <- sppr %>% 
+  enframe() %>% 
+  full_join(site_type, by = c("name" = "site"))
+
+pal <- c("lightsalmon1", "gold1", "palegreen4")
+
+plot_sppr <- ggplot(sppr_df, aes(x = landtype, y = value, fill = landtype)) +
+  geom_boxplot() +
+  scale_fill_manual(values = pal) +
+  scale_x_discrete(labels = c("dry \n (n = 96)", "mix \n (n = 59)", "riparian \n (n = 55)")) +
+  theme(legend.position = "none",
+        plot.background = element_rect("white"),
+        panel.background = element_rect("white"),
+        panel.grid = element_line("grey90"),
+        axis.line = element_line("gray25"),
+        axis.text = element_text(size = 12, color = "gray25"),
+        axis.title = element_text(color = "gray25"),
+        legend.text = element_text(size = 12)) + 
+  labs(x = "Ecological landtype",
+       y = "Number of species per site",
+       title = "Species richness")
+plot_sppr
+```
+
+
+### How diverse are my communities?
+
+There are _many_ diversity metrics out there, but I've only included Shannon diversity here, takes into account species abundance and evenness: $$ H = -\sum_{i=1}^{R}p_iln(p_i) $$
+
+where $R$ is total richness, $p_i$ is the proportion of $R$ of the $i$th species. The `diversity()` function in `vegan` will calculate Shannon, Simpson, and Fisher's alpha - just select which one you want in the arguments. Here, I'll calculate Shannon diversity for each site, then plot mean Shannon diversity per landtype.
+
+```{r shannon-diversity}
+shannondiv <- diversity(birds)
+head(shannondiv)
+```
+
+Now we're ready for plotting!
+
+```{r shannon-diversity-plot}
+shandiv_df <- shannondiv %>% 
+  # put all those calculations into a tibble
+  enframe() %>% 
+  # rename columns for ease of joining
+  rename(site = name,
+         shan_div = value)
+
+div_plot_df <- shandiv_df %>% 
+  # join with site_type
+  full_join(site_type, ., by = "site") %>% 
+  # group by landtype
+  group_by(landtype) %>% 
+  # calculate mean and standard error of diversity
+  summarize(mean = round(mean(shan_div), 2),
+            err = sd(shan_div)/sqrt(length(shan_div))) %>% 
+  dplyr::mutate(label = "mean") %>% 
+  unite("mean_label", label, mean, sep = " = ", remove = FALSE)
+
+clean_background <- theme(plot.background = element_rect("white"),
+        panel.background = element_rect("white"),
+        panel.grid = element_line("white"),
+        axis.line = element_line("gray25"),
+        axis.text = element_text(size = 12, color = "gray25"),
+        axis.title = element_text(color = "gray25"),
+        legend.text = element_text(size = 12))
+
+plot_shandiv <- ggplot(div_plot_df, aes(x = landtype, y = mean, fill = landtype)) +
+  geom_col(color = "black") +
+  scale_fill_manual(values = pal) +
+  geom_errorbar(aes(ymin = mean - err, ymax = mean + err), width = 0.5) +
+  geom_text(aes(x = landtype, y = mean + err + 0.07, label = mean_label)) +
+  scale_x_discrete(labels = c("dry \n (n = 96)", "mix \n (n = 59)", "riparian \n (n = 55)")) +
+  scale_y_continuous(limits = c(0, 2.75), expand = c(0,0)) +
+  clean_background + 
+  theme(legend.position = "none") +
+  labs(x = "Ecological landtype",
+       y = "Mean Shannon diversity",
+       title = "Shannon diversity")
+plot_shandiv
+```
+
+
+### How different are my communities in species composition?
+
+#### Permutational Multivariate Analysis of Variance (perMANOVA)
+
+Assessing differences in community composition is done with **per**mutational **M**ultivariate **An**alysis **o**f **Va**riance, or perMANOVA. These tests are done on distances, meaning that they assess the differences between communities based on dissimilarity. With perMANOVA, the null hypothesis is that the centroids of your groups (in ordination space as defined by the dissimilarity measure you've chosen) are equivalent for all groups. In other words, you are asking if, following some measure of (dis)similarity, the community composition of sites between groups is the same.  
+
+The function `adonis()` will do this for you.
+
+```{r permanova}
+bird_perm <- adonis(birds ~ landtype, data = env)
+bird_perm
+```
+
+Bird communities differ by landtype, yay! We can now represent our communities in ordination space, which distills the multivariate (i.e. species) dataset into two axes. Like diversity, there are _very many_ different methods of ordination. I'm still wrapping my head around how to pick the best method for any given dataset, but the way most people tend to choose a method is to go with whatever has been done in their field. 
+
+
+#### Principal Components Analysis (PCA)
+
+**P**rincipal **C**omponents **A**nalysis (PCA) is a basic form of ordination wherein the goal is to  
+
+> reduce a data set with _n_ cases (objects) and _p_ variables (attributes) to a smaller number 
+> of synthetic variables that represent most of the information in the original data set. 
+> Thus, we reduce a data set of _n_ objects in a _p_-dimensional space to _n_ objects in 
+> a reduced _k_-dimensional space, where _k_ is typically much smaller than _p_ (McCune and Grace 2001).  
+
+For a fun explanation of PCA using superheroes, see Allison Horst's lectures on PCA [here](https://docs.google.com/presentation/d/1Q3y_EzJlrOzBHkhObaMr1Bx1rmQmwX7zxuorNff_3p4/edit?usp=sharing) and [here](https://docs.google.com/presentation/d/1mK_E5fbtibWimlk29qkchJ8hOY2LBkEUg0OJMxqCe_c/edit?usp=sharing).
+
+The function in vegan for PCA is `rda()`, which technically stands for Redundancy Analysis. I won't go into RDA, but when you run this function on your site x species matrix without any environmental variables it does a PCA.
+
+```{r bird-PCA}
+birdPCA <- rda(birds)
+birdPCA
+```
+
+```{r pca-biplot}
+pcabiplot <- biplot(birdPCA, scaling = 2)
+
+PCAscores <- scores(birdPCA, display = "sites") %>% 
+  as.data.frame() %>% 
+  bind_cols(site_type, .)
+
+PCAvect <- scores(birdPCA, display = "species") %>% 
+  as.data.frame()
+
+plot_PCA <- ggplot(PCAscores) +
+  geom_point(aes(x = PC1, y = PC2, color = landtype)) +
+  scale_color_manual(values = pal) +
+  geom_vline(xintercept = c(0), color = "grey70", linetype = 2) +
+  geom_hline(yintercept = c(0), color = "grey70", linetype = 2) +
+  geom_segment(data = PCAvect, aes(x = 0, y = 0, xend = PC1, yend = PC2), arrow = arrow(length = unit(0.2, "cm"))) +
+  geom_text(data = PCAvect, aes(x = PC1, y = PC2, label = rownames(PCAvect))) +
+  clean_background +
+  labs(x = "PC1 (23.57%)",
+       y = "PC2 (12.23%)",
+       title = "Principal Components Analysis")
+plot_PCA
+```
+
+There's a lot to look at here, but I would pay most attention to the arrows and their direction. In this ordination, points are sites and arrows are species. Length of the arrow indicates the amount of variation in your communities explained by that particular variable (longer arrows -> larger increase) and the angle of the arrows to each other indicates correlations (the more obtuse the angle, the less correlated).
+
+Out of curiosity, I tried the PCA again with only the 10 most abundant birds. Bonus ordination?
+
+```{r}
+abund_birds <- colSums(birds) %>% 
+  enframe() %>% 
+  arrange(-value) %>% 
+  head(10) %>% 
+  pull(name)
+
+subbird <- birds[,abund_birds]
+subPCA <- rda(subbird)
+subPCA
+subbiplot <- biplot(subPCA, scaling = 2)
+
+scores <- as.data.frame(subbiplot$sites) %>% 
+  bind_cols(site_type, .)
+vect <- as.data.frame(subbiplot$species)
+
+plot_subPCA <- ggplot(scores) +
+  geom_point(aes(x = PC1, y = PC2, color = landtype)) +
+  scale_color_manual(values = pal) +
+  geom_vline(xintercept = c(0), color = "grey70", linetype = 2) +
+  geom_hline(yintercept = c(0), color = "grey70", linetype = 2) +
+  geom_segment(data = vect, aes(x = 0, y = 0, xend = PC1, yend = PC2), arrow = arrow(length = unit(0.2, "cm"))) +
+  geom_text(data = vect, aes(x = PC1, y = PC2, label = rownames(vect))) +
+  clean_background +
+  labs(x = "PC1 (31.51%)",
+       y = "PC2 (18.83%)",
+       title = "Principal Components Analysis",
+       subtitle = "Subset of species data")
+plot_subPCA
+```
+
+#### Non-metric Multidimensional Scaling (NMDS)
+
+Most community ecologists use **N**on-metric **M**ultidimensional **S**caling (NMDS). You can imagine NMDS as a reduction of axes, where all your "axes" are the species within a sample, and each sample exists relative to others on the axes. For this dataset, imagine an axis that describes relative abundance of ACFL (Acadian Flycatchers) - all points exist somewhere on that axis relative to the others. Now consider another axis describing the relative abundance of KEWA (Kentucky Warblers) - all points still exist somewhere on that axis, but now there are two axes describing the position of your points. **NMDS** allows you to collapse all these species axes (in this case, 48) into 2 to plot in cartesian space in order to visualize the differences between samples and sites. We'll do this by using `metaMDS()`. 
+
+```{r NMDS}
+bird_NMDS <- metaMDS(birds)
+
+bird_NMDS
+```
+
+Looking at the stressplot for your NMDS is an important part of evaluating how well the ordination represented the complexity in your data. The x-axis is the observed dissimilarity, and the y-axis is the ordination distance. The stressplot shows you how closely the ordination (y-axis) represents the dissimilarities calculated (x-axis). The points around the red stair steps are the communities, and the distance from the line represents the "stress", or how they are pulled from their original position to be represented in their ordination. 
+
+```{r NMDS-stressplot}
+stressplot(bird_NMDS)
+```
+
+You can plot your NMDS output in base R...
+```{r NMDS-plot-baseR}
+plot(bird_NMDS)
+```
+
+... but you can also extract elements from the output to plot in ggplot, which is much nicer.
+```{r NMDS-plot}
+plot_df <- as_tibble(bird_NMDS$points) %>% 
+  bind_cols(site_type, .)
+
+plot_nmds <- ggplot(plot_df, aes(x = MDS1, y = MDS2, color = landtype, shape = landtype)) +
+  geom_point(size = 3, alpha = 0.8) +
+  scale_color_manual(values = pal) +
+  stat_ellipse(linetype = 2, size = 1) +
+  clean_background +
+  labs(title = "NMDS")
+plot_nmds
+```
+
+##### Things to consider about stress
+
+Generally, an average stress of > 0.2 is an indication that the ordination didn't do a good job of representing community structure. However, NMDS stress increases as sample size increases, so if you have many samples (as this dataset does) your ordination will likely exhibit a lot of stress. As a quick example, I've subsampled 15 communities from the original set of 210. If you look at the stress from the NMDS and the stress plot, it's within the range that's considered "acceptable." 
+
+```{r subsampled-NMDS}
+sub <- birds[sample(nrow(birds), 15), ]
+subNMDS <- metaMDS(sub)
+stressplot(subNMDS)
+```
+
+### How is community structure related to specific environmental variables?
+
+The above ordination methods are "unconstrained" ordination, which means that the ordination is done only considering species counts in the site x species matrix. **Constrained** ordination is appropriate for what's common in ecological data: a matrix of communities (site x species) and another matrix of environmental characteristics (site x environment). Our environmental matrix is `env`, created up top.
+
+With constrained ordination, we can ask how environmental variables relate to community composition. Again, there are many different methods for constrained ordination and what's appropriate for your data is up to you. This example demonstrates **C**anonical **C**orrespondence **A**nalysis, or CCA.
+
+Let's say I'm interested in the effects of canopy height, stems/hectare, and big stem diameter on bird community structure.
+
+```{r bird-CCA}
+birdCCA <- cca(birds ~ canopy_height + stems_ha + big_stem_bas, data = env)
+birdCCA
+```
+
+```{r cca-plot, warning = FALSE}
+ccaplot <- plot(birdCCA)
+
+ccavectors <- as.data.frame(ccaplot$biplot * 5.15)
+  
+site_data <- as.data.frame(ccaplot$sites) %>% 
+  bind_cols(., site_type)
+
+species_data <- as.data.frame(ccaplot$species)
+
+plot_cca <- ggplot(site_data) +
+  geom_point(aes(x = CCA1, y = CCA2, color = landtype), shape = 19, size = 2, alpha = 0.8) +
+  scale_color_manual(values = pal) +
+  geom_segment(data = ccavectors, aes(x = 0, y = 0, xend = CCA1, yend = CCA2), arrow = arrow(length = unit(0.2, "cm"))) +
+  geom_vline(xintercept = c(0), color = "grey70", linetype = 2) +
+  geom_hline(yintercept = c(0), color = "grey70", linetype = 2) +
+  geom_point(data = species_data, aes(x = CCA1, y = CCA2), shape = 17, size = 2, color = "slateblue") +
+  scale_x_continuous(limits = c(-6, 10)) +
+  geom_text(data = ccavectors, aes(x = CCA1, y = CCA2, label = rownames(ccavectors)), nudge_x = 0.3, nudge_y = 0.3) +
+  clean_background +
+  labs(title = "Canonical Correspondence Analysis")
+plot_cca
+```
+
+
+### Bibliography and further reading
+
+ - Many of these functions are described in more technical language in [Jari Oksanen's own tutorial](http://cc.oulu.fi/~jarioksa/opetus/metodi/vegantutor.pdf) for using `vegan` for ordination. He also has very helpful [slides](http://cc.oulu.fi/~jarioksa/opetus/metodi/index2016.html) from his course on multivariate methods.  
+- Michael M. Palmer's [Ordination Methods - an overview](http://ordination.okstate.edu/overview.htm) contains descriptions of _many_ different ordination methods that I revisit often.
+- This [comparison of different techniques](http://www.umass.edu/landeco/teaching/multivariate/schedule/summary.handouts.pdf) in multivariate statistics is basically a flowchart for deciding which test is best for your questions and data. It's a lifesaver! It comes from a whole [course on multivariate statistics in ecology](https://www.umass.edu/landeco/teaching/multivariate/multivariate.html) at UMass Amherst.
+- McCune and Grace's [Analysis of Ecological Communities](https://www.wildblueberrymedia.net/store/analysis-of-ecological-communities) is an invaluable resource for learning about different analyses, and what is appropriate given your data.
+- For microbial ecologists, [GUSTA ME](https://sites.google.com/site/mb3gustame/home) is a great summary of ordination techniques in the context of microbial work.
+
+

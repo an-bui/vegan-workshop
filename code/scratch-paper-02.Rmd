@@ -86,6 +86,7 @@ sa_curve
 ```{r species-rarefaction-curve}
 raremax <- min(rowSums(birds_df))
 
+rarefied <- rarefy(birds_df, sample = raremax)
 rarecurve(birds_df, step = 20, sample = raremax, label = TRUE)
 ```
 

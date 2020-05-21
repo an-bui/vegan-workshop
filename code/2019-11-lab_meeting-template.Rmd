@@ -1,0 +1,216 @@
+---
+title: "Community analysis in R using 'vegan' - Stier Lab Meeting"
+author: "your name here"
+date: "06 November 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### Introduction and main takeaways
+
+Today, we'll be working through real data on bird communities in three different habitat types. The data are published in a _really cool_ paper: Adams, Bryce T. and Stephen N. Matthews. "Diverse temperate forest bird assemblages demonstrate closer correspondence to plant species composition than vegetation structure.” _Ecography_. https://doi.org/10.1111/ecog.04487
+
+At the end of this workshop, you should be able to answer the following questions about these data, and apply them to your own data:  
+
+* How diverse are my communities? `diversity()`  
+* How speciose are my communities? `specnumber()`  
+* How different are my communities in species composition? `adonis()`, `metaMDS()`  
+
+* How many samples would I have to take to adequately describe the species that exist in my communities?  
+* How many species would I be able to sample if I were to take a sample of n individuals?  
+* What mathematical model best describes how my communities are assembled?  
+* What dissimilarity index best fits my data?  
+* How much variation in my communities can be explained by my environmental variables?  
+
+Let's start by loading in our libraries and data.
+```{r set up, message = FALSE}
+# libraries
+library(tidyverse)
+library(vegan)
+
+# data
+# bird communities
+birds <- read_csv(here::here("data", "bird-comm.csv")) %>% 
+  column_to_rownames("point")
+# environmental variables
+env <- read_csv(here::here("data", "environmental-variables.csv"))
+# metadata dataframe
+site_type <- env %>% 
+  dplyr::select(point, ELT)
+```
+
+### What's all this data?
+
+Bird communities were sampled using point counts at 120 points distributed amongst 3 ecological landtypes (ELT) : 1. dry (ridgetops), 2. riparian (bottomlands), and 3. mixed (hillslopes). The ELTs can be distinguished using their most common tree species, though the site is speciose (~75 tree species).
+
+The `birds` data frame is in the format that data generally have to be in to start doing any analysis, which is to say that samples (or sites) are in rows, and species are columns. **The only entries in the data frame are counts.**  
+If you'd like to explore what species are in this set, you can translate alpha codes to common names using [this chart](https://www.birdpop.org/docs/misc/Alpha_codes_eng.pdf).
+
+```{r birds}
+head(birds, 3)
+```
+
+The `env` data frame contains all the "environmental" variables that were measured, which in this case was tree community composition and canopy structure. An explanation of the columns is below:
+
+Column | Meaning |
+------ | ------- |
+point  | point count (1-120) |
+ELT    | ecological landtype (dry, riparian, mixed) |
+all_stem_den | total stem density (# of stems per hectare) of both under and overstory stems |
+big_stem_bas | large stem basal area (m2/hectare) of trees [stems/trees >/=8 cm diameter at breast height (DBH)] |
+can_covr_mea | percent canopy cover |
+can_heig_mea | mean canopy height (m) |
+7 - 23 | Dominant tree species from each ELT, vegetation composition (stem density - # stems per ha) of combined little and big stems |
+
+### How diverse are my communities? `diversity()`
+
+There are _so very many_ diversity metrics out there, but today we'll only be talking about Shannon diversity takes into account species abundance and evenness: $$ H = -\sum_{i=1}^{R}p_iln(p_i) $$
+
+where $R$ is total richness, $p_i$ is the proportion of $R$ of the $i$th species. The `diversity()` function in `vegan` will calculate Shannon, Simpson, and Fisher's alpha - just select which one you want
+
+```{r shannon diversity, message = FALSE}
+shannondiv <- birds %>% 
+  diversity() %>% 
+  enframe()
+```
+
+Bonus plot with colors painstakingly selected:
+```{r}
+nicer_shannondivdf <- shannondiv %>% 
+  mutate(mean = round(mean, 2)) %>% 
+  dplyr::mutate(label = "mean") %>% 
+  unite("mean_label", label, mean, sep = " = ", remove = FALSE)
+
+nicer_shandivplot <- ggplot(nicer_shannondivdf, aes(x = ELT, y = mean, fill = ELT)) +
+  geom_col(color = "black") +
+  scale_fill_manual(values = c("lightsalmon1", "gold1", "palegreen4")) +
+  geom_errorbar(aes(ymin = mean - err, ymax = mean + err), width = 0.5) +
+  geom_text(aes(x = ELT, y = mean + err + 0.1, label = mean_label)) +
+  scale_x_discrete(labels = c("dry \n (n = 96)", "mix \n (n = 59)", "riparian \n (n = 55)")) +
+  scale_y_continuous(limits = c(0, 2.75), expand = c(0,0)) +
+  theme(legend.position = "none",
+        plot.background = element_rect("white"),
+        panel.background = element_rect("white"),
+        panel.grid = element_line("grey90"),
+        axis.line = element_line("gray25"),
+        axis.text = element_text(size = 12, color = "gray25"),
+        axis.title = element_text(color = "gray25"),
+        legend.text = element_text(size = 12)) + 
+  labs(x = "Ecological landtype (ELT)",
+       y = "Mean Shannon diversity",
+       title = "Shannon diversity")
+
+nicer_shandivplot
+```
+
+### How speciose are my communities? 
+
+`specnumber()` will tell you the number of species within each sample. You can then run an analysis of variance to ask if mean species richness is significantly different across sites.
+
+```{r species richness}
+sppr <- specnumber(birds)
+
+aovbirds <- aov(sppr ~ ELT, data = site_type)
+summary(aovbirds)
+```
+
+Another bonus plot:
+```{r}
+sppr_df <- sppr %>% 
+  enframe() %>% 
+  full_join(site_type, by = c("name" = "point"))
+
+sppr_box <- ggplot(sppr_df, aes(x = ELT, y = value, fill = ELT)) +
+  geom_boxplot() +
+  scale_fill_manual(values = c("lightsalmon1", "gold1", "palegreen4")) +
+  scale_x_discrete(labels = c("dry \n (n = 96)", "mix \n (n = 59)", "riparian \n (n = 55)")) +
+  theme(legend.position = "none",
+        plot.background = element_rect("white"),
+        panel.background = element_rect("white"),
+        panel.grid = element_line("grey90"),
+        axis.line = element_line("gray25"),
+        axis.text = element_text(size = 12, color = "gray25"),
+        axis.title = element_text(color = "gray25"),
+        legend.text = element_text(size = 12)) + 
+  labs(x = "Ecological landtype (ELT)",
+       y = "Number of species",
+       title = "Species richness")
+sppr_box
+```
+
+### How different are my communities in species composition?
+
+Assessing differences in community composition is done with **per**mutational **M**ultivariate **An**alysis **o**f **Va**riance, or perMANOVA. These tests are done on distances, meaning that they assess the differences between communities based on dissimilarity. The function `adonis()` will do this for you very easily.
+
+```{r permanova}
+
+```
+
+According to the perMANOVA, our sites are significantly different in community composition. But what does this actually mean?
+
+#### What are the effects of environmental variation on community composition?
+
+Ordination is a method for describing the effects of environmental variation (generally between sites) on community composition. Like diversity, there are _very many_ different methods of ordination. I'm still wrapping my head around how to pick the best method for any given dataset, but the way most people tend to choose a method is to go with whatever has been done in their field. 
+
+##### Non-metric Multidimensional Scaling (NMDS)
+
+Most community ecologists use **N**on-metric **M**ultidimensional **S**caling (NMDS), so we'll start there first. You can imagine NMDS as a reduction of axes, where all your "axes" are the species within a sample, and each sample exists relative to others on the axes. For this dataset, imagine an axis that describes relative abundance of ACFL (Acadian Flycatchers) - all points exist somewhere on that axis relative to the others. Now consider another axis describing the relative abundance of KEWA (Kentucky Warblers) - all points still exist somewhere on that axis, but now there are two axes describing the position of your points. **NMDS** allows you to collapse all these species axes (in this case, 48) into 2 to plot in cartesian space in order to visualize the differences between samples and sites. We'll do this by using `metaMDS()`. 
+
+```{r NMDS}
+
+```
+
+```{r}
+
+```
+
+```{r}
+# Bonus: a prettier plot
+nicer_NMDSplot <- ggplot(plot_df, aes(x = MDS1, y = MDS2, color = ELT, shape = ELT)) +
+  geom_point(size = 3, alpha = 0.8) +
+  scale_color_manual(values = c("lightsalmon1", "gold1", "palegreen4")) +
+  stat_ellipse(linetype = 2, size = 1)
+nicer_NMDSplot
+```
+
+##### What's standardization?
+
+Sometimes your ordination doesn't converge on a single solution - that's ok! There are many reasons why that might happen (e.g. very speciose communities, many rare species). However, you can **standardize** your communities to make the calculation work, meaning that you transform your count data relative to other samples in your dataset.
+```{r}
+
+```
+
+```{r}
+t_plot_df <- as_tibble(bird_t_NMDS$points) %>% 
+  bind_cols(site_type, .)
+
+nicer_t_NMDSplot <- ggplot(t_plot_df, aes(x = MDS1, y = MDS2, color = ELT, shape = ELT)) +
+  geom_point(size = 3, alpha = 0.8) +
+  scale_color_manual(values = c("lightsalmon1", "gold1", "palegreen4")) +
+  stat_ellipse(linetype = 2, size = 1)
+nicer_t_NMDSplot
+```
+
+#### Principal Components Analysis (PCA)
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+
+### Bibliography and further reading
+
+- I drew from Jim Baxter's materials for a class entitled [Methods in Ecology, Evolution, and Conservation](http://irt-pw-cp1.irt.csus.edu/jbaxter/courses/methods-in-eec/) at Sacramento State for this excellent [definition of ordination](csus.edu/indiv/b/baxterj/bio%20221b/ordination.pdf).  
+- Many of these functions are described in more technical language in [Jari Oksanen's own tutorial](http://cc.oulu.fi/~jarioksa/opetus/metodi/vegantutor.pdf) for using `vegan` for ordination.  
+- Michael M. Palmer's [Ordination Methods - an overview](http://ordination.okstate.edu/overview.htm) contains descriptions of _many_ different ordination methods that I revisit often.
